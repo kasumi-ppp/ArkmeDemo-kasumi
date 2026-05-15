@@ -16,11 +16,27 @@ import {
   testIdentitiesStorageKey,
   testMessagesStorageKey,
   type TestConversationType,
+  type TestGroup,
   type TestIdentity,
   type TestMessage,
 } from "@/data/testConversations";
 import { formatBubbleTime, formatTimeLabel } from "@/lib/time";
 import { cn } from "@/lib/utils";
+
+const adminMessageModeStorageKey = "arkme-demo.adminMessageMode";
+
+function getInitialAdminMessageMode(): TestConversationType {
+  if (typeof window === "undefined") return "private";
+
+  const savedMode = window.localStorage.getItem(adminMessageModeStorageKey);
+  return savedMode === "group" ? "group" : "private";
+}
+
+function persistAdminMessageMode(mode: TestConversationType) {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(adminMessageModeStorageKey, mode);
+}
 
 function getLatestIdentityMessage(messages: TestMessage[], identityId: string) {
   return messages
@@ -50,10 +66,12 @@ export default function AdminMessageConsole() {
   const [activeGroupId, setActiveGroupId] = React.useState(
     () => getInitialTestGroups()[0]?.id ?? ""
   );
-  const [messageMode, setMessageMode] = React.useState<TestConversationType>("private");
+  const [messageMode, setMessageMode] =
+    React.useState<TestConversationType>(getInitialAdminMessageMode);
   const [showCreateIdentityModal, setShowCreateIdentityModal] = React.useState(false);
   const [showCreateGroupModal, setShowCreateGroupModal] = React.useState(false);
   const [showIdentityPicker, setShowIdentityPicker] = React.useState(false);
+  const [showGroupPicker, setShowGroupPicker] = React.useState(false);
   const [showAdminInfo, setShowAdminInfo] = React.useState(false);
   const [identityName, setIdentityName] = React.useState("");
   const [identityNote, setIdentityNote] = React.useState("");
@@ -63,6 +81,7 @@ export default function AdminMessageConsole() {
   const [messageTextFocused, setMessageTextFocused] = React.useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const identityPickerRef = React.useRef<HTMLDivElement>(null);
+  const groupPickerRef = React.useRef<HTMLDivElement>(null);
   const adminInfoRef = React.useRef<HTMLDivElement>(null);
 
   const activeIdentity =
@@ -192,6 +211,23 @@ export default function AdminMessageConsole() {
   }, [showIdentityPicker]);
 
   React.useEffect(() => {
+    if (!showGroupPicker) return;
+
+    const closePickerOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && groupPickerRef.current?.contains(target)) {
+        return;
+      }
+      setShowGroupPicker(false);
+    };
+
+    document.addEventListener("pointerdown", closePickerOnOutsidePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", closePickerOnOutsidePointerDown);
+    };
+  }, [showGroupPicker]);
+
+  React.useEffect(() => {
     if (!showAdminInfo) return;
 
     const closeInfoOnOutsidePointerDown = (event: PointerEvent) => {
@@ -250,9 +286,11 @@ export default function AdminMessageConsole() {
       persistTestGroups(nextGroups);
       setActiveGroupId(nextGroups.at(-1)?.id ?? "");
       setMessageMode("group");
+      persistAdminMessageMode("group");
       return nextGroups;
     });
     setShowCreateGroupModal(false);
+    setShowGroupPicker(false);
     setGroupName("");
     setGroupNote("");
   };
@@ -341,32 +379,50 @@ export default function AdminMessageConsole() {
                       ? "bg-[var(--admin-dialog-bg)] text-text [box-shadow:var(--shadow-sm)]"
                       : "text-text-tertiary hover:text-text"
                   )}
-                  onClick={() => setMessageMode(mode)}
+                  onClick={() => {
+                    setMessageMode(mode);
+                    persistAdminMessageMode(mode);
+                    setShowGroupPicker(false);
+                    setShowIdentityPicker(false);
+                  }}
                 >
                   {mode === "private" ? "私聊" : "群聊"}
                 </button>
               ))}
             </div>
             {messageMode === "group" && (
-              <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-                <select
-                  value={activeGroup?.id ?? ""}
-                  onChange={(event) => setActiveGroupId(event.target.value)}
-                  className="h-9 min-w-0 max-w-[220px] rounded-[9px] border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-2 text-[13px] text-text outline-none focus:border-primary focus:[box-shadow:var(--admin-input-focus-shadow)]"
-                >
-                  {sortedGroups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
+              <div ref={groupPickerRef} className="relative min-w-0">
                 <button
                   type="button"
-                  className="h-9 shrink-0 rounded-[9px] border border-[var(--admin-border)] px-3 text-[13px] text-text-tertiary transition hover:bg-hover-overlay hover:text-text focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]"
-                  onClick={() => setShowCreateGroupModal(true)}
+                  className="inline-flex max-w-[260px] items-center rounded-[10px] border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-[12px] leading-4 text-text-tertiary transition hover:border-primary hover:bg-[var(--admin-input-hover-bg)] hover:text-text focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]"
+                  onClick={() => {
+                    setShowGroupPicker((open) => !open);
+                    setShowIdentityPicker(false);
+                  }}
+                  aria-expanded={showGroupPicker}
                 >
-                  新建群
+                  <span className="mr-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                  <span className="truncate">
+                    发到 {activeGroup?.name ?? "选择群聊"}
+                  </span>
+                  <span className="ml-1 shrink-0 text-[14px] leading-none">⌄</span>
                 </button>
+                {showGroupPicker && (
+                  <GroupPickerDropdown
+                    align="right"
+                    groups={sortedGroups}
+                    messages={messages}
+                    activeGroup={activeGroup}
+                    onSelect={(groupId) => {
+                      setActiveGroupId(groupId);
+                      setShowGroupPicker(false);
+                    }}
+                    onCreate={() => {
+                      setShowGroupPicker(false);
+                      setShowCreateGroupModal(true);
+                    }}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -391,7 +447,7 @@ export default function AdminMessageConsole() {
                     </p>
                     <p className="mt-1 text-[12px] leading-5 text-text-tertiary">
                       {messageMode === "group"
-                        ? "选择群和发送身份后，从下方输入框发送第一条群聊测试消息。"
+                        ? "选择群聊和发送身份后，从下方输入框发送第一条群聊测试消息。"
                         : "选择或创建身份后，从下方输入框发送第一条私聊测试消息。"}
                     </p>
                   </div>
@@ -424,38 +480,40 @@ export default function AdminMessageConsole() {
                   className="admin-message-textarea block min-h-[78px] w-full resize-none rounded-t-[14px] border-0 bg-transparent px-4 py-3 text-[15px] leading-[1.55] text-text outline-none placeholder:text-input-placeholder focus-visible:shadow-none"
                   rows={3}
                 />
-                <div className="flex min-h-11 items-center justify-between gap-3 px-4 pb-3">
-                  <div
-                    ref={identityPickerRef}
-                    className="relative min-w-0 flex-1"
-                  >
-                    <button
-                      type="button"
-                      className="inline-flex max-w-full items-center rounded-full px-2 py-1 text-[12px] leading-4 text-text-tertiary transition hover:bg-hover-overlay focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]"
-                      onClick={() => setShowIdentityPicker((open) => !open)}
-                      aria-expanded={showIdentityPicker}
-                    >
-                      <span className="mr-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                      <span className="truncate">以 {activeIdentity.name} 的身份发送</span>
-                      <span className="ml-1 shrink-0 text-[14px] leading-none">⌄</span>
-                    </button>
-                    {showIdentityPicker && (
-                      <IdentityPickerDropdown
-                        identities={sortedIdentities}
-                        messages={messages}
-                        activeIdentity={activeIdentity}
-                        onSelect={(identityId) => {
-                          setActiveIdentityId(identityId);
-                          setShowIdentityPicker(false);
+                <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pb-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <div ref={identityPickerRef} className="relative min-w-0">
+                      <button
+                        type="button"
+                        className="inline-flex max-w-full items-center rounded-full px-2 py-1 text-[12px] leading-4 text-text-tertiary transition hover:bg-hover-overlay focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]"
+                        onClick={() => {
+                          setShowIdentityPicker((open) => !open);
+                          setShowGroupPicker(false);
                         }}
-                        onCreate={() => {
-                          setShowIdentityPicker(false);
-                          setShowCreateIdentityModal(true);
-                        }}
-                      />
-                    )}
+                        aria-expanded={showIdentityPicker}
+                      >
+                        <span className="mr-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                        <span className="truncate">以 {activeIdentity.name} 的身份发送</span>
+                        <span className="ml-1 shrink-0 text-[14px] leading-none">⌄</span>
+                      </button>
+                      {showIdentityPicker && (
+                        <IdentityPickerDropdown
+                          identities={sortedIdentities}
+                          messages={messages}
+                          activeIdentity={activeIdentity}
+                          onSelect={(identityId) => {
+                            setActiveIdentityId(identityId);
+                            setShowIdentityPicker(false);
+                          }}
+                          onCreate={() => {
+                            setShowIdentityPicker(false);
+                            setShowCreateIdentityModal(true);
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="ml-auto flex shrink-0 items-center gap-3">
                     <span className="text-[12px] leading-5 text-text-tertiary">
                       Enter发送 / Shift+Enter换行
                     </span>
@@ -680,6 +738,80 @@ function AdminConversationMessages({
   );
 }
 
+function GroupPickerDropdown({
+  align = "left",
+  groups,
+  messages,
+  activeGroup,
+  onSelect,
+  onCreate,
+}: {
+  align?: "left" | "right";
+  groups: TestGroup[];
+  messages: TestMessage[];
+  activeGroup: TestGroup | null;
+  onSelect: (groupId: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "absolute z-20 w-[320px] max-w-[calc(100vw-48px)] rounded-[14px] border border-[var(--admin-border)] bg-[var(--admin-dialog-bg)] p-2 [box-shadow:var(--admin-floating-shadow)]",
+        align === "right"
+          ? "right-0 top-full mt-2"
+          : "bottom-full left-1 mb-2"
+      )}
+    >
+      <div className="max-h-[260px] space-y-1 overflow-auto">
+        {groups.map((group) => {
+          const messageCount = messages.filter(
+            (message) => message.conversationId === group.id
+          ).length;
+          const active = group.id === activeGroup?.id;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              className={cn(
+                "flex w-full items-center rounded-[10px] px-3 py-2.5 text-left transition focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]",
+                active ? "bg-primary-selected" : "hover:bg-hover-overlay"
+              )}
+              onClick={() => onSelect(group.id)}
+            >
+              <GroupAvatar group={group} />
+              <span className="ml-3 min-w-0 flex-1">
+                <span className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="truncate text-[14px] font-medium text-text">
+                    {group.name}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-text-tertiary">
+                    {messageCount}条
+                  </span>
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-text-tertiary">
+                  {group.note.trim() || "此群聊暂无备注"}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className="mt-2 flex h-10 w-full items-center rounded-[10px] border border-[var(--admin-border-subtle)] px-3 text-left text-sm font-medium text-text transition hover:bg-hover-overlay focus:outline-none focus-visible:[box-shadow:var(--admin-input-focus-shadow)]"
+        onClick={onCreate}
+      >
+        <span className="flex items-center">
+          <span className="mr-2 flex h-6 w-6 items-center justify-center rounded-full bg-fill-4 text-base leading-none">
+            +
+          </span>
+          创建新群聊
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function IdentityPickerDropdown({
   identities,
   messages,
@@ -742,6 +874,17 @@ function IdentityPickerDropdown({
         </span>
       </button>
     </div>
+  );
+}
+
+function GroupAvatar({ group }: { group: TestGroup }) {
+  return (
+    <span
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold text-white"
+      style={{ backgroundColor: group.color }}
+    >
+      {group.avatarLabel}
+    </span>
   );
 }
 
